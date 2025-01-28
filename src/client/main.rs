@@ -42,20 +42,19 @@ async fn main() {
                 break;
             }
         }
+        let _ = ws_write.send(Message::Close(None)).await;
     });
 
     // Task to handle incoming messages (server updates) and print to the console
     let receive_task = tokio::spawn(async move {
         while let Some(msg) = ws_read.next().await {
             match msg {
-                Ok(Message::Text(text)) => {
-                    println!("\n{}", text);
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("Error receiving message: {}", e);
+                Ok(Message::Text(text)) => println!("\n{}", text),
+                Ok(Message::Close(_)) | Err(_) => {
+                    println!("Connection closed by server.");
                     break;
                 }
+                _ => {}
             }
         }
     });

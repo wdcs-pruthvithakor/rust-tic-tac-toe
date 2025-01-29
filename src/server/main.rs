@@ -10,6 +10,7 @@ use tokio::net::TcpStream;
 use chrono::Utc;
 use log::{info, warn, error};
 use env_logger;
+use tokio::time::{sleep, Duration};
 
 trait UniqueId {
     fn generate_id() -> String {
@@ -43,6 +44,10 @@ impl Player {
 
     fn set_symbol(&mut self, symbol: PlayerSymbol) {
         self.symbol = symbol;
+    }
+
+    fn get_symbol(&self) -> PlayerSymbol {
+        self.symbol.clone()
     }
 }
 
@@ -78,68 +83,49 @@ struct GameServer {
 
 impl UniqueId for Game {}
 
-impl GameServer {
-    fn new() -> Self {
-        GameServer {
-            games: HashMap::new(),
-            // players: HashMap::new(),
-        }
-    }
-
-    // fn register_player(&mut self, player: Player) {
-    //     self.players.insert(player.id.clone(), player);
-    // }
-
-    fn create_game(&mut self, player: Player) -> String {
-        let game = Game::new(player);
-        let game_id = game.get_id();
-        self.games.insert(game_id.clone(), Arc::new(Mutex::new(game)));
-        game_id
-    }
-
-    async fn join_game(&mut self, game_id: &str, player: Player) -> Result<(), String> {
-        if let Some(game_c) = self.games.get_mut(game_id) {
-            let mut game = game_c.lock().await;
-            let player_name = player.name.clone();
-            if game.status == GameStatus::WaitingForPlayers {
-                game.players.push(player);
-                game.broadcast_to_players(format!("player {} has joined the game !\n", player_name)).await;
-                if game.players.len() == 2 {
-                    game.status = GameStatus::InProgress;
-                    let game_state = game.get_game_state();
-                    game.broadcast_to_players(game_state).await;
-                }
-                Ok(())
-            } else {
-                Err("Game is not accepting players".to_string())
-            }
-        } else {
-            Err("Game not found".to_string())
-        }
-    }
-
-    async fn remove_game(&mut self, game_id: &str) {
-        self.games.remove(game_id);
-    }
-}
-
 impl Game {
-    fn new(player: Player) -> Self {
+    pub fn new(player: Player) -> Self {
         let game_id = Self::generate_id();
         Game {
-            id: game_id.clone(),
+            id: game_id,
             board: vec![None; 9],
             players: vec![player],
             current_turn: 0,
             status: GameStatus::WaitingForPlayers,
         }
     }
-
-    fn get_id(&self) -> String{
+    
+    pub fn get_id(&self) -> String{
         self.id.clone()
     }
 
-    fn make_move(&mut self, player_id: &str, position: usize) -> Result<String, String> {
+    pub fn get_status(&self) -> GameStatus {
+        self.status.clone()
+    }
+
+    pub fn set_status(&mut self, status: GameStatus) {
+        self.status = status
+    }
+
+    pub fn get_players(&self) -> Vec<Player> {
+        self.players.clone()
+    }
+
+    pub fn add_player(&mut self, player: Player) {
+        self.players.push(player);
+    }
+
+    pub fn reset(&mut self) {
+        self.board = vec![None; 9];
+        self.current_turn = 0;
+        if self.players.len() == 2 {
+            self.status = GameStatus::InProgress;    
+        } else {
+            self.status = GameStatus::WaitingForPlayers;
+        }
+    }
+
+    pub fn make_move(&mut self, player_id: &str, position: usize) -> Result<String, String> {
         if self.status != GameStatus::InProgress {
             return Err("Game is not in progress".to_string());
         }
@@ -159,11 +145,7 @@ impl Game {
         Ok(self.get_game_state())
     }
 
-    fn get_status(&self) -> GameStatus {
-        self.status.clone()
-    }
-
-    fn get_game_state(&mut self) -> String {
+    pub fn get_game_state(&mut self) -> String {
         let mut board_state = String::new();
     
         // Define ANSI color codes
@@ -263,7 +245,7 @@ impl Game {
         None
     }
     
-    async fn broadcast_to_players(&self, message: String) {
+    pub async fn broadcast_to_players(&self, message: String) {
         for player in self.players.clone() {
             let mut player_ws = player.ws_sink.lock().await;
             player_ws
@@ -273,16 +255,95 @@ impl Game {
         }
     }
 
-    async fn broadcast_close_players(&self) {
-        for player in self.players.clone() {
-            let mut player_ws = player.ws_sink.lock().await;
-            player_ws
-                .send(Message::Close(None))
-                .await
-                .unwrap();
+    // async fn broadcast_close_players(&self) {
+    //     for player in self.players.clone() {
+    //         let mut player_ws = player.ws_sink.lock().await;
+    //         player_ws
+    //             .send(Message::Close(None))
+    //             .await
+    //             .unwrap();
+    //     }
+    // }
+        
+}
+
+impl GameServer {
+    fn new() -> Self {
+        GameServer {
+            games: HashMap::new(),
+            // players: HashMap::new(),
         }
     }
-        
+
+    // fn register_player(&mut self, player: Player) {
+    //     self.players.insert(player.id.clone(), player);
+    // }
+
+    fn create_game(&mut self, player: Player) -> String {
+        let game = Game::new(player);
+        let game_id = game.get_id();
+        self.games.insert(game_id.clone(), Arc::new(Mutex::new(game)));
+        game_id
+    }
+
+    async fn join_game(&mut self, game_id: &str, mut player: Player) -> Result<(), String> {
+        if let Some(game_c) = self.games.get_mut(game_id) {
+            let mut game = game_c.lock().await;
+            let player_name = player.name.clone();
+            if game.get_status() == GameStatus::WaitingForPlayers {
+                // game.players
+                let players = game.get_players();
+                if let Some(game_player) = players.get(0){
+                    if game_player.get_symbol() == PlayerSymbol::O {
+                        player.set_symbol(PlayerSymbol::X);
+                    }
+                }
+                game.add_player(player);
+                game.broadcast_to_players(format!("player {} has joined the game !\n", player_name)).await;
+                if game.get_players().len() == 2 {
+                    game.set_status(GameStatus::InProgress);
+                    let game_state = game.get_game_state();
+                    game.broadcast_to_players(game_state).await;
+                }
+                Ok(())
+            } else {
+                Err("Game is not accepting players".to_string())
+            }
+        } else {
+            Err("Game not found".to_string())
+        }
+    }
+
+    async fn remove_game(&mut self, game_id: &str) {
+        self.games.remove(game_id);
+    }
+
+    pub fn start_logging_active_games(server: Arc<Mutex<Self>>) {
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(10)).await; // Log every 10 seconds
+
+                let server = server.lock().await;
+                let mut active_games = Vec::new();
+                let games_len = server.games.len();
+                for (game_id, game) in server.games.iter() {
+                    let game = game.lock().await;
+                    let players: Vec<String> = game.players.iter().map(|p| p.name.clone()).collect();
+                    active_games.push(format!(
+                        "Game {}: Players [{}] | Status: {:?}",
+                        game_id, players.join(", "), game.get_status()
+                    ));
+                }
+
+                if !active_games.is_empty() {
+                    info!("🟢 Active Games: {}\n{}", games_len, active_games.join("\n"));
+                } else {
+                    info!("⚪ No active games.");
+                }
+            }
+        });
+    }
+
 }
 
 
@@ -330,7 +391,7 @@ async fn handle_client(
         Some(Ok(Message::Text(choice))) => match choice.trim() {
             "1" => {
                 let mut server = server.lock().await;
-                game_id = server.create_game(player.clone());
+                game_id = server.create_game(player);
                 if ws_sink.lock().await
                     .send(Message::Text(format!("✅ Game created! Your game ID is: {}\nWaiting for another player to join...", game_id).into()))
                     .await
@@ -353,7 +414,7 @@ async fn handle_client(
                 if let Some(Ok(Message::Text(id))) = ws_stream.next().await {
                     let mut server = server.lock().await;
                     player.set_symbol(PlayerSymbol::O);
-                    match server.join_game(&id, player.clone()).await {
+                    match server.join_game(&id, player).await {
                         Ok(_) => {
                             game_id = id.to_string();
                             info!("Player {} joined game {}", name, game_id);
@@ -392,75 +453,94 @@ async fn handle_client(
 
     // Game loop
     while let Some(message) = ws_stream.next().await {
+
         match message {
             Ok(Message::Text(text)) => {
-                // Process move or input
+                if text.trim().to_lowercase() == "exit" {
+                    let mut server = server.lock().await;
+                    if let Some(game) = server.games.get_mut(&game_id) {
+                        let mut game = game.lock().await;
+                        game.players.retain(|p| p.id != player_id);
+                        game.broadcast_to_players(format!("❗ Player {} has left the game. ⏳ Waiting for a new player...", name)).await;
+                        info!("Player {} disconnected.", name);
+                        game.reset();
+                        if game.players.is_empty() {
+                            drop(game);
+                            server.remove_game(&game_id).await;
+                        }
+                    }
+                    return;
+                }
+
                 if let Ok(position) = text.trim().parse::<usize>() {
                     let position = position - 1;
                     let mut server = server.lock().await;
                     if let Some(game) = server.games.get_mut(&game_id) {
                         let mut game = game.lock().await;
-                        match game.make_move(&player_id, position) {
-                            Ok(state) => {
-                                game.broadcast_to_players(state).await;
-                            }
-                            Err(e) => {
-                                if ws_sink.lock().await
-                                    .send(Message::Text(format!("❌ Error: {}", e).into()))
-                                    .await
-                                    .is_err()
-                                {
-                                    error!("Player: {player_id} Game: {game_id}, Failed to make move: {}", e);
-                                    return;
+                        if game.get_status() == GameStatus::InProgress {
+                            match game.make_move(&player_id, position) {
+                                Ok(state) => {
+                                    game.broadcast_to_players(state).await;
+                                }
+                                Err(e) => {
+                                    if ws_sink.lock().await
+                                        .send(Message::Text(format!("❌ Error: {}", e).into()))
+                                        .await
+                                        .is_err()
+                                    {
+                                        error!("Player: {player_id} Game: {game_id}, Failed to make move: {}", e);
+                                        return;
+                                    }
                                 }
                             }
+                        } else if game.get_status() == GameStatus::WaitingForPlayers {
+                            let _ = ws_sink.lock().await
+                                .send(Message::Text(format!("⏳ Waiting for players to join the game...").into()))
+                                .await;
                         }
-
                         if game.get_status() == GameStatus::Finished {
-                            game.broadcast_to_players("🎉 Game over! Thanks for playing.".to_string().into()).await;
-                            game.broadcast_close_players().await;
-                            drop(game);
-                            server.remove_game(&game_id).await;
-                            return;
+                            game.broadcast_to_players("🎉 Game over! Type `RESTART` to play again or `EXIT` to leave.".to_string().into()).await;
+                        } 
+                    }
+                } else if text.trim().to_lowercase() == "restart" {
+                    let mut server = server.lock().await;
+                    if let Some(game) = server.games.get_mut(&game_id) {
+                        let mut game = game.lock().await;
+                        if game.get_status() == GameStatus::Finished {
+                            game.reset();
+                            game.broadcast_to_players("🔄 Game restarted!".to_string()).await;
+                            let status = game.get_game_state();
+                            game.broadcast_to_players(status).await;
+                        } else {
+                            let _ = ws_sink.lock().await
+                                .send(Message::Text(format!("❌ Error: You can't restart game before finishing current game ❗").into()))
+                                .await;
                         }
                     }
                 } else {
-                    // Invalid input
-                    if ws_sink.lock().await
-                        .send(Message::Text("❌ Invalid input, please enter a number from 1 to 9.".to_string().into()))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
+                    let _ = ws_sink.lock().await
+                        .send(Message::Text(format!("❌ Invalid Input: Enter a number from 1 to 9").into()))
+                        .await;
                 }
             }
             Ok(Message::Close(_)) | Err(_) => {
-                warn!("Player {} disconnected. Cleaning up...", player_id);
-
-                // Handle disconnection
                 let mut server = server.lock().await;
                 if let Some(game) = server.games.get_mut(&game_id) {
-                    
                     let mut game = game.lock().await;
                     game.players.retain(|p| p.id != player_id);
-                    
-                    // Notify remaining players
-                    if !game.players.is_empty() {
-                        game.broadcast_to_players("❗ A player has left the game. Game ending.".to_string()).await;
-                        game.broadcast_close_players().await;
+                    game.broadcast_to_players(format!("❗ Player {} disconnected. ⏳ Waiting for a new player...", name)).await;
+                    warn!("Player {} disconnected.", name);
+                    game.reset();
+                    if game.players.is_empty() {
+                        drop(game);
+                        server.remove_game(&game_id).await;
                     }
                 }
-                server.remove_game(&game_id).await;
-                break;
+                return;
             }
             _ => {}
         }
     }
-
-    // Close connection and exit
-    let _ = ws_sink.lock().await.send(Message::Close(None)).await;
-    info!("Player {} has disconnected.", player_id);
 }
 
 
@@ -472,7 +552,8 @@ async fn main() {
     info!("WebSocket server listening on ws://127.0.0.1:8080");
 
     let server = Arc::new(Mutex::new(GameServer::new()));
-
+    // Start logging active games
+    GameServer::start_logging_active_games(server.clone());
     while let Ok((stream, _)) = listener.accept().await {
         let ws_stream = accept_async(stream).await.unwrap();
         let server_clone = server.clone();

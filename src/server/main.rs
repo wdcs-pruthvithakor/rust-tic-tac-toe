@@ -8,6 +8,8 @@ use rand::Rng;
 use tokio_tungstenite::WebSocketStream;
 use tokio::net::TcpStream;
 use chrono::Utc;
+use log::{info, warn, error};
+use env_logger;
 
 trait UniqueId {
     fn generate_id() -> String {
@@ -115,6 +117,10 @@ impl GameServer {
             Err("Game not found".to_string())
         }
     }
+
+    async fn remove_game(&mut self, game_id: &str) {
+        self.games.remove(game_id);
+    }
 }
 
 impl Game {
@@ -168,9 +174,13 @@ impl Game {
         let dark_line = "\x1b[1;30m═══╬═══╬═══\x1b[0m\n"; // Dark line separator
     
         // Build the 3x3 grid
+        let mut some_count = 0;
         for row in 0..3 {
             for col in 0..3 {
                 let index = row * 3 + col;
+                if self.board[index].is_some() {
+                    some_count+=1;
+                }
                 let symbol = match self.board[index] {
                     Some(PlayerSymbol::X) => format!("{} X {}", bold_red, reset),
                     Some(PlayerSymbol::O) => format!("{} O {}", bold_blue, reset),
@@ -186,7 +196,13 @@ impl Game {
                 board_state.push_str(&dark_line); // Dark separator
             }
         }
-    
+        if some_count == self.board.len() {
+            self.status = GameStatus::Finished;
+            return format!(
+                "🎮 Game ID: {}\n\n{}\n🌟 Result: Draw!! 🎉",
+                self.id, board_state
+            )
+        }  
         let current_player = &self.players[self.current_turn].name;
         match self.check_winner() {
             None => {
@@ -211,8 +227,6 @@ impl Game {
             }
         }
     }
-    
-    
 
     fn check_winner(&self) -> Option<PlayerSymbol> {
         // Check rows and columns
@@ -285,6 +299,7 @@ async fn handle_client(
         .await
         .is_err()
     {
+        error!("Failed to send initial message to client.");
         return;
     }
 
@@ -292,10 +307,11 @@ async fn handle_client(
         Some(Ok(Message::Text(name))) => name,
         _ => {
             let _ = ws_sink.lock().await.send(Message::Close(None)).await;
+            error!("Failed to receive player name.");
             return;
         }
     };
-
+    info!("Player {} connected.", name);
     let mut player = Player::new(name.to_string().clone(), PlayerSymbol::X, ws_sink.clone());
     let player_id = player.id.clone();
 
@@ -305,6 +321,7 @@ async fn handle_client(
         .await
         .is_err()
     {
+        error!("Failed to send game selection prompt for player: {player_id}.");
         return;
     }
 
@@ -319,8 +336,10 @@ async fn handle_client(
                     .await
                     .is_err()
                 {
+                    error!("Failed to send game creation message for player: {player_id}.");
                     return;
                 }
+                info!("Player {} created game {}", name, game_id);
             }
             "2" => {
                 if ws_sink.lock().await
@@ -328,6 +347,7 @@ async fn handle_client(
                     .await
                     .is_err()
                 {
+                    error!("Failed to send game ID request message for player: {player_id}.");
                     return;
                 }
                 if let Some(Ok(Message::Text(id))) = ws_stream.next().await {
@@ -336,11 +356,13 @@ async fn handle_client(
                     match server.join_game(&id, player.clone()).await {
                         Ok(_) => {
                             game_id = id.to_string();
+                            info!("Player {} joined game {}", name, game_id);
                             if ws_sink.lock().await
                                 .send(Message::Text(format!("🎮 Joined game: {}", game_id).into()))
                                 .await
                                 .is_err()
                             {
+                                error!("Failed to send join confirmation for player: {player_id} game: {game_id}.");
                                 return;
                             }
                         }
@@ -348,6 +370,7 @@ async fn handle_client(
                             let _ = ws_sink.lock().await
                                 .send(Message::Text(format!("❌ Error: {}", e).into()))
                                 .await;
+                            error!("Player: {player_id} Failed to join game {}: {}", id, e);
                             return;
                         }
                     }
@@ -360,6 +383,7 @@ async fn handle_client(
                 let _ = ws_sink.lock().await
                     .send(Message::Text("❌ Invalid choice, please restart.".to_string().into()))
                     .await;
+                error!("Invalid choice received from client {player_id}.");
                 return;
             }
         }
@@ -367,64 +391,85 @@ async fn handle_client(
     }
 
     // Game loop
-    while let Some(Ok(Message::Text(text))) = ws_stream.next().await {
-        let position: usize = match text.trim().parse::<usize>() {
-            Ok(pos) => pos - 1,
-            Err(_) => {
-                if ws_sink.lock().await
-                    .send(Message::Text("❌ Invalid input, please enter a number from 1 to 9.".to_string().into()))
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
-                continue;
-            }
-        };
+    while let Some(message) = ws_stream.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                // Process move or input
+                if let Ok(position) = text.trim().parse::<usize>() {
+                    let position = position - 1;
+                    let mut server = server.lock().await;
+                    if let Some(game) = server.games.get_mut(&game_id) {
+                        let mut game = game.lock().await;
+                        match game.make_move(&player_id, position) {
+                            Ok(state) => {
+                                game.broadcast_to_players(state).await;
+                            }
+                            Err(e) => {
+                                if ws_sink.lock().await
+                                    .send(Message::Text(format!("❌ Error: {}", e).into()))
+                                    .await
+                                    .is_err()
+                                {
+                                    error!("Player: {player_id} Game: {game_id}, Failed to make move: {}", e);
+                                    return;
+                                }
+                            }
+                        }
 
-        let mut server = server.lock().await;
-        match server.games.get_mut(&game_id) {
-            Some(game) => {
-                let mut game = game.lock().await;
-                match game.make_move(&player_id, position) {
-                    Ok(state) => {
-                        game.broadcast_to_players(state).await;
-                    }
-                    Err(e) => {
-                        if ws_sink.lock().await
-                            .send(Message::Text(format!("❌ Error: {}", e).into()))
-                            .await
-                            .is_err()
-                        {
+                        if game.get_status() == GameStatus::Finished {
+                            game.broadcast_to_players("🎉 Game over! Thanks for playing.".to_string().into()).await;
+                            game.broadcast_close_players().await;
+                            drop(game);
+                            server.remove_game(&game_id).await;
                             return;
                         }
                     }
-                }
-                if game.get_status() == GameStatus::Finished {
-                    game.broadcast_to_players("🎉 Game over! Thanks for playing.".to_string().into()).await;
-                    game.broadcast_close_players().await;
-                    return;
+                } else {
+                    // Invalid input
+                    if ws_sink.lock().await
+                        .send(Message::Text("❌ Invalid input, please enter a number from 1 to 9.".to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
             }
-            None => {
-                let _ = ws_sink.lock().await
-                    .send(Message::Text("❌ Game not found.".to_string().into()))
-                    .await;
+            Ok(Message::Close(_)) | Err(_) => {
+                warn!("Player {} disconnected. Cleaning up...", player_id);
+
+                // Handle disconnection
+                let mut server = server.lock().await;
+                if let Some(game) = server.games.get_mut(&game_id) {
+                    
+                    let mut game = game.lock().await;
+                    game.players.retain(|p| p.id != player_id);
+                    
+                    // Notify remaining players
+                    if !game.players.is_empty() {
+                        game.broadcast_to_players("❗ A player has left the game. Game ending.".to_string()).await;
+                        game.broadcast_close_players().await;
+                    }
+                }
+                server.remove_game(&game_id).await;
                 break;
             }
+            _ => {}
         }
     }
 
     // Close connection and exit
     let _ = ws_sink.lock().await.send(Message::Close(None)).await;
+    info!("Player {} has disconnected.", player_id);
 }
 
 
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-    println!("WebSocket server listening on ws://127.0.0.1:8080");
+    info!("WebSocket server listening on ws://127.0.0.1:8080");
 
     let server = Arc::new(Mutex::new(GameServer::new()));
 

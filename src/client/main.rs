@@ -1,17 +1,24 @@
 use tokio::io::{self, AsyncBufReadExt};
 use futures::{StreamExt, SinkExt};
-use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message
-};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
+    // Listen for Ctrl+C
+    let shutdown_signal = tokio::spawn(async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for Ctrl+C");
+        println!("Ctrl+C detected. Shutting down...");
+    });
+
     // Connect to the WebSocket server
-    let (ws_stream,_) = connect_async("ws://127.0.0.1:8080")
-    .await
-    .unwrap();
+    let (ws_stream, _) = connect_async("ws://127.0.0.1:8080")
+        .await
+        .expect("Failed to connect to WebSocket server");
     let (mut ws_write, mut ws_read) = ws_stream.split();
+
     // Set up a channel to handle user input
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
@@ -59,6 +66,20 @@ async fn main() {
         }
     });
 
-    // Wait for all tasks to complete
-    let _ = tokio::join!(input_task, send_task, receive_task);
+    // Wait for Ctrl+C or any task to finish
+    tokio::select! {
+        _ = shutdown_signal => {
+            println!("Ctrl+C pressed. Exiting...");
+        }
+        _ = input_task => {
+            println!("Input task finished. Exiting...");
+        }
+        _ = send_task => {
+            println!("Send task finished. Exiting...");
+        }
+        _ = receive_task => {
+            println!("Receive task finished. Exiting...");
+        }
+    }
+    println!("Client terminated.");
 }

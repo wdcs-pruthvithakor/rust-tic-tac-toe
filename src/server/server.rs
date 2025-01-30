@@ -22,6 +22,7 @@ impl GameServer {
     pub fn get_mut_game(&mut self, id: &String) -> Option<&mut Arc<Mutex<Game>>> {
         self.games.get_mut(id)
     }
+
     pub fn create_game(&mut self, player: Player) -> String {
         let game = Game::new(player);
         let game_id = game.get_id();

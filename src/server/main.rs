@@ -7,21 +7,27 @@ mod game;
 mod player;
 mod server;
 mod utils;
-mod websocket; // Import the module
+mod websocket;
 use server::GameServer;
 use websocket::handle_client;
+use std::error::Error;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:8080").await?; // Use ? here
+
     info!("WebSocket server listening on ws://127.0.0.1:8080");
 
     let server = Arc::new(Mutex::new(GameServer::new()));
-    // Start logging active games
     GameServer::start_logging_active_games(server.clone());
-    while let Ok((stream, _)) = listener.accept().await {
-        let ws_stream = accept_async(stream).await.unwrap();
+
+    loop {
+        let (stream, _) = listener.accept().await?; // Use ? here
+
+        let ws_stream = accept_async(stream).await?; // Use ? here
+
         let server_clone = server.clone();
         tokio::spawn(handle_client(ws_stream, server_clone));
     }

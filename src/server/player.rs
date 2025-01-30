@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio::sync::Mutex;
+use std::sync::Arc;
 use tokio_tungstenite::WebSocketStream;
+use tokio::net::TcpStream;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerSymbol {
@@ -19,11 +19,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(
-        name: String,
-        symbol: PlayerSymbol,
-        ws_sink: Arc<Mutex<futures::stream::SplitSink<WebSocketStream<TcpStream>, Message>>>,
-    ) -> Self {
+    pub fn new(name: String, symbol: PlayerSymbol, ws_sink: Arc<Mutex<futures::stream::SplitSink<WebSocketStream<TcpStream>, Message>>>) -> Self {
         Self {
             name,
             symbol,
@@ -48,9 +44,7 @@ impl Player {
         self.name.clone()
     }
 
-    pub fn get_ws_sink(
-        &self,
-    ) -> Arc<Mutex<futures::stream::SplitSink<WebSocketStream<TcpStream>, Message>>> {
+    pub fn get_ws_sink(&self) -> Arc<Mutex<futures::stream::SplitSink<WebSocketStream<TcpStream>, Message>>> {
         self.ws_sink.clone()
     }
 }

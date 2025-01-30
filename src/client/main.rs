@@ -1,7 +1,7 @@
+use futures::{SinkExt, StreamExt};
 use tokio::io::{self, AsyncBufReadExt};
-use futures::{StreamExt, SinkExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 #[tokio::main]
 async fn main() {

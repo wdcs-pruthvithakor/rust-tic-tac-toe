@@ -105,7 +105,7 @@ impl Game {
                 };
                 board_state.push_str(&symbol);
                 if col < 2 {
-                    board_state.push_str("║"); // Vertical separator
+                    board_state.push('║'); // Vertical separator
                 }
             }
             board_state.push('\n'); // Move to the next row
@@ -130,20 +130,28 @@ impl Game {
             }
             Some(PlayerSymbol::X) => {
                 self.status = GameStatus::Finished;
+                let name = match self.players[0].get_symbol() {
+                    PlayerSymbol::X => self.players[0].get_name(),
+                    PlayerSymbol::O => self.players[1].get_name()
+                };
                 format!(
                     "🎮 Game ID: {}\n\n{}\n🏆 Winner: {} (X) 🎉",
                     self.id,
                     board_state,
-                    self.players[0].get_name()
+                    name
                 )
             }
             Some(PlayerSymbol::O) => {
                 self.status = GameStatus::Finished;
+                let name = match self.players[1].get_symbol() {
+                    PlayerSymbol::O => self.players[1].get_name(),
+                    PlayerSymbol::X => self.players[0].get_name()
+                };
                 format!(
                     "🎮 Game ID: {}\n\n{}\n🏆 Winner: {} (O) 🎉",
                     self.id,
                     board_state,
-                    self.players[1].get_name()
+                    name
                 )
             }
         }

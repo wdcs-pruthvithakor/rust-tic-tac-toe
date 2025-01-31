@@ -10,11 +10,24 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::WebSocketStream;
 use tokio::time::{Duration, timeout};
+use std::error::Error;
+use std::fmt;
 
 // Type aliases for convenience
 type WsStream = WebSocketStream<TcpStream>;
 type WsSink = Arc<Mutex<futures::stream::SplitSink<WsStream, Message>>>;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(Debug)]
+struct MyCustomError(String);
+
+impl fmt::Display for MyCustomError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for MyCustomError {}
 
 // Enum to represent different game actions
 #[derive(Debug)]
@@ -22,6 +35,7 @@ enum GameAction {
     Move(usize),
     Restart,
     Exit,
+    Invalid
 }
 
 enum SessionState {
@@ -38,7 +52,7 @@ enum GameMessage {
     EnterGameId,
     GameJoined(String),
     InvalidChoice,
-    // InvalidInput,
+    InvalidInput,
     WaitingForPlayers,
     GameOver,
     CantRestart,
@@ -80,6 +94,11 @@ impl GameSession {
             GameAction::Move(position) => self.handle_move(position).await,
             GameAction::Restart => self.handle_restart().await,
             GameAction::Exit => self.handle_disconnect().await,
+            GameAction::Invalid => {
+                self.send_message(GameMessage::InvalidInput)
+                    .await?;
+                Ok(SessionState::Continue) // Keep session active
+            }    
         }
     }
 
@@ -187,7 +206,7 @@ impl ToString for GameMessage {
             GameMessage::EnterGameId => "🔍 Enter the game ID to join:".into(),
             GameMessage::GameJoined(id) => format!("🎮 Joined game: {}", id),
             GameMessage::InvalidChoice => "❌ Invalid choice, please restart.".into(),
-            // GameMessage::InvalidInput => "❌ Invalid Input: Enter a number from 1 to 9".into(),
+            GameMessage::InvalidInput => "❌ Invalid Input: Enter a number from 1 to 9".into(),
             GameMessage::WaitingForPlayers => "⏳ Waiting for players to join the game...".into(),
             GameMessage::GameOver => "🎉 Game over! Type `RESTART` to play again or `EXIT` to leave.".into(),
             GameMessage::CantRestart => "❌ Error: You can't restart game before finishing current game ❗".into(),
@@ -217,7 +236,10 @@ async fn handle_connection(
     server: Arc<Mutex<GameServer>>,
 ) -> Result<()> {
     // Initial setup
-    let (name, player_id, game_id) = setup_player(ws_stream, ws_sink.clone(), server.clone()).await?;
+    let (name, player_id, game_id) = match setup_player(ws_stream, ws_sink.clone(), server.clone()).await{
+        Ok((name, player_id, game_id)) => (name, player_id, game_id),
+        Err(_) => return Ok(())
+    };
     
     // Create game session
     let session = GameSession::new(
@@ -246,8 +268,18 @@ async fn handle_game_setup(
 
     match ws_stream.next().await {
         Some(Ok(Message::Text(choice))) => match choice.trim() {
-            "1" => create_new_game(ws_sink, player, server).await,
-            "2" => join_existing_game(ws_stream, ws_sink, player, server).await,
+            "1" => {
+                match create_new_game(ws_sink, player, server).await {
+                    Ok(message) => Ok(message),
+                    Err(e) => Err(e)
+                } 
+            }
+            "2" => {
+                match join_existing_game(ws_stream, ws_sink, player, server).await{
+                    Ok(message) => Ok(message),
+                    Err(e) => Err(e)
+                }
+            }
             _ => {
                 send_message(&ws_sink, GameMessage::InvalidChoice).await?;
                 Err("Invalid choice received from client".into())
@@ -285,15 +317,23 @@ async fn join_existing_game(
 
     let game_id = match ws_stream.next().await {
         Some(Ok(Message::Text(id))) => id,
-        _ => return Err("Invalid game ID received".into()),
+        _ => {
+            send_message(&ws_sink, GameMessage::Error("Invalid game ID recieved".to_string())).await?;
+            return Err("Invalid game ID received".into())
+        }
     };
 
     player.set_symbol(PlayerSymbol::O);
     let mut server = server.lock().await;
     
-    server.join_game(&game_id, player.clone()).await?;
-    send_message(&ws_sink, GameMessage::GameJoined(game_id.to_string())).await?;
-    
+    match server.join_game(&game_id, player.clone()).await {
+        Ok(_) => send_message(&ws_sink, GameMessage::GameJoined(game_id.to_string())).await?,
+        Err(e) =>  {
+            send_message(&ws_sink, GameMessage::Error(e.clone())).await?; 
+            return Err(Box::new(MyCustomError(e)));
+        }
+    }
+
     info!("Player {} joined game {}", player.get_name(), game_id);
     Ok(game_id.to_string())
 }
@@ -312,7 +352,10 @@ async fn setup_player(
     let player_id = player.get_id();
 
     // Handle game setup
-    let game_id = handle_game_setup(ws_stream, ws_sink, &mut player, server).await?;
+    let game_id = match handle_game_setup(ws_stream, ws_sink, &mut player, server).await{
+        Ok(game_id) => game_id,
+        Err(err) => return Err(err)
+    };
 
     Ok((name, player_id, game_id))
 }
@@ -378,8 +421,8 @@ fn parse_game_action(text: &str) -> GameAction {
         "exit" => GameAction::Exit,
         "restart" => GameAction::Restart,
         text => match text.parse::<usize>() {
-            Ok(position) => GameAction::Move(position),
-            Err(_) => GameAction::Move(0), // Invalid move will be handled by game logic
+            Ok(position) if (1..=9).contains(&position) => GameAction::Move(position),
+            _ => GameAction::Invalid,
         },
     }
 }

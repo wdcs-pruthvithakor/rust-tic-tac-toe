@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio::time::{Duration, timeout};
 
 // Type aliases for convenience
 type WsStream = WebSocketStream<TcpStream>;
@@ -37,14 +38,15 @@ enum GameMessage {
     EnterGameId,
     GameJoined(String),
     InvalidChoice,
-    InvalidInput,
+    // InvalidInput,
     WaitingForPlayers,
     GameOver,
     CantRestart,
     PlayerDisconnected(String),
     GameRestarted,
     Error(String),
-    Custom(String),
+    InactiveDisconnect
+    // Custom(String),
 }
 
 // Struct to manage game session state
@@ -151,6 +153,28 @@ impl GameSession {
             .await
             .map_err(|e| e.into())
     }
+
+    async fn is_game_in_progress(&self) -> bool {
+        let server = self.server.lock().await;
+        if let Some(game) = server.get_game(&self.game_id) {
+            let game = game.lock().await;
+            println!("{:?} {:?}", game.get_current_turn_player(), self.player_id);
+            if game.get_status() == GameStatus::InProgress {
+                return true
+            }
+        }
+        false
+    }
+
+    async fn get_current_turn_player(&self) -> Option<String> {
+        let server = self.server.lock().await;
+        if let Some(game) = server.get_game(&self.game_id) {
+            let game = game.lock().await;
+            return game.get_current_turn_player();
+        }
+        None
+    }
+
 }
 
 // Implementation for GameMessage to convert to string
@@ -163,14 +187,15 @@ impl ToString for GameMessage {
             GameMessage::EnterGameId => "🔍 Enter the game ID to join:".into(),
             GameMessage::GameJoined(id) => format!("🎮 Joined game: {}", id),
             GameMessage::InvalidChoice => "❌ Invalid choice, please restart.".into(),
-            GameMessage::InvalidInput => "❌ Invalid Input: Enter a number from 1 to 9".into(),
+            // GameMessage::InvalidInput => "❌ Invalid Input: Enter a number from 1 to 9".into(),
             GameMessage::WaitingForPlayers => "⏳ Waiting for players to join the game...".into(),
             GameMessage::GameOver => "🎉 Game over! Type `RESTART` to play again or `EXIT` to leave.".into(),
             GameMessage::CantRestart => "❌ Error: You can't restart game before finishing current game ❗".into(),
             GameMessage::PlayerDisconnected(name) => format!("❗ Player {} has left the game. ⏳ Waiting for a new player...", name),
             GameMessage::GameRestarted => "🔄 Game restarted!".into(),
             GameMessage::Error(e) => format!("❌ Error: {}", e),
-            GameMessage::Custom(msg) => msg.clone(),
+            GameMessage::InactiveDisconnect => "❗ Disconnected due to inactivity ⏰".into()
+            // GameMessage::Custom(msg) => msg.clone(),
         }
     }
 }
@@ -312,7 +337,24 @@ async fn handle_game_loop(
     ws_stream: &mut futures::stream::SplitStream<WsStream>,
     session: &GameSession,
 ) -> Result<()> {
-    while let Some(message) = ws_stream.next().await {
+    'game_loop: while let Some(message) = {
+        if session.is_game_in_progress().await && session.get_current_turn_player().await == Some(session.player_id.clone()) {
+            match timeout(Duration::from_secs(30), ws_stream.next()).await {
+                Ok(Some(msg_result)) => Some(msg_result),
+                Ok(None) => continue 'game_loop,
+                Err(_) => {
+                    session.send_message(GameMessage::InactiveDisconnect).await?;
+                    session.handle_disconnect().await?;
+                    return Ok(());
+                }
+            }
+        }  else {
+            match timeout(Duration::from_secs(10), ws_stream.next()).await {
+                Ok(Some(msg_result)) => Some(msg_result),
+                _ => continue 'game_loop,
+            }
+        }
+    } {
         match message {
             Ok(Message::Text(text)) => {
                 let action = parse_game_action(&text);

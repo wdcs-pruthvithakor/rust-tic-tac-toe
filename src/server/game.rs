@@ -52,6 +52,15 @@ impl Game {
         self.players.push(player);
     }
 
+    pub fn get_current_turn_player(&self) -> Option<String> {
+        if let Some(player) = self.players.get(self.current_turn) {
+            Some(player.get_id())
+        }
+        else {
+            None
+        }
+    }
+
     pub fn reset(&mut self) {
         self.board = vec![None; 9];
         self.current_turn = 0;

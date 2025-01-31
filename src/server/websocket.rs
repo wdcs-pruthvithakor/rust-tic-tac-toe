@@ -35,7 +35,9 @@ enum GameAction {
     Move(usize),
     Restart,
     Exit,
-    Invalid
+    Help,
+    GetStatus,
+    Invalid,
 }
 
 enum SessionState {
@@ -59,7 +61,9 @@ enum GameMessage {
     PlayerDisconnected(String),
     GameRestarted,
     Error(String),
-    InactiveDisconnect
+    InactiveDisconnect,
+    Help,
+    GameStatus(String),
     // Custom(String),
 }
 
@@ -89,11 +93,31 @@ impl GameSession {
         }
     }
 
+    async fn send_game_status(&self) -> Result<()> {
+        let server = self.server.lock().await;
+        if let Some(game) = server.get_game(&self.game_id) {
+            let mut game = game.lock().await;
+            let status = game.get_game_state();
+            self.send_message(GameMessage::GameStatus(status)).await?;
+        } else {
+            self.send_message(GameMessage::Error("Game not found".to_string())).await?;
+        }
+        Ok(())
+    }
+    
     async fn handle_action(&self, action: GameAction) -> Result<SessionState> {
         match action {
             GameAction::Move(position) => self.handle_move(position).await,
             GameAction::Restart => self.handle_restart().await,
             GameAction::Exit => self.handle_disconnect().await,
+            GameAction::Help => {
+                self.send_message(GameMessage::Help).await?;
+                Ok(SessionState::Continue)
+            }
+            GameAction::GetStatus => {
+                self.send_game_status().await?;
+                Ok(SessionState::Continue)
+            }    
             GameAction::Invalid => {
                 self.send_message(GameMessage::InvalidInput)
                     .await?;
@@ -213,7 +237,10 @@ impl ToString for GameMessage {
             GameMessage::PlayerDisconnected(name) => format!("❗ Player {} has left the game. ⏳ Waiting for a new player...", name),
             GameMessage::GameRestarted => "🔄 Game restarted!".into(),
             GameMessage::Error(e) => format!("❌ Error: {}", e),
-            GameMessage::InactiveDisconnect => "❗ Disconnected due to inactivity ⏰".into()
+            GameMessage::InactiveDisconnect => "❗ Disconnected due to inactivity ⏰".into(),
+            GameMessage::Help => "🆘 Available Commands:\n- Enter 1-9 to make a move\n- Type 'restart' to restart the game\n- Type 'exit' to leave\n- Type 'status' to check the game status".into(),
+            GameMessage::GameStatus(status) => format!("📊 Game Status: {}", status),
+
             // GameMessage::Custom(msg) => msg.clone(),
         }
     }
@@ -420,6 +447,8 @@ fn parse_game_action(text: &str) -> GameAction {
     match text.trim().to_lowercase().as_str() {
         "exit" => GameAction::Exit,
         "restart" => GameAction::Restart,
+        "help" => GameAction::Help,
+        "status" => GameAction::GetStatus,
         text => match text.parse::<usize>() {
             Ok(position) if (1..=9).contains(&position) => GameAction::Move(position),
             _ => GameAction::Invalid,

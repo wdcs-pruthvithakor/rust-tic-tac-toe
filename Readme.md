@@ -71,6 +71,7 @@ RUST_LOG=info cargo run --bin server
 The server will start listening on `ws://127.0.0.1:8080`. It waits for incoming WebSocket connections from clients.
 
 ### 4. Run the Client:
+You can now connect to the WebSocket server using a WebSocket client.
 
 To run the client (in a different terminal), use:
 
@@ -79,6 +80,18 @@ cargo run --bin client
 ```
 
 The client will connect to the server, and the user will be prompted to either create or join a game.
+
+**or**
+
+This can be also done in a browser console (using JavaScript) or through any WebSocket client like Postman, Insomnia.
+
+To connect, open the WebSocket client and connect to the following URL:
+
+```
+ws://127.0.0.1:8080
+```
+
+Alternatively, you can also connect using a WebSocket testing tool or a custom client application that interacts with the WebSocket server.
 
 ## How to Play
 

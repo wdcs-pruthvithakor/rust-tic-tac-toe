@@ -48,8 +48,8 @@ Make sure you have the following installed:
 ### 1. Clone the repository:
 
 ```bash
-git clone <repo-url>
-cd tic-tac-toe-websocket
+git clone https://github.com/wdcs-pruthvithakor/rust-tic-tac-toe.git
+cd rust-tic-tac-toe
 ```
 
 ### 2. Install dependencies:

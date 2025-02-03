@@ -204,11 +204,11 @@ When the player requests the game status, the server will respond with a visual 
 ```plaintext
 📊 Game Status: 🎮 Game ID: 1738331017305-4141
 
-  1 ║ X ║ 3 
+ 1 ║ X ║ 3 
 ═══╬═══╬═══
-  4 ║ O ║ 6 
+ 4 ║ O ║ 6 
 ═══╬═══╬═══
-  7 ║ 8 ║ 9 
+ 7 ║ 8 ║ 9 
 
 🌟 It's a's turn! (Enter a number from 1 to 9)
 ```

@@ -18,7 +18,7 @@ use std::error::Error;
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
-    let listener = TcpListener::bind("127.0.0.1:8080").await?; // Use ? here
+    let listener = TcpListener::bind("127.0.0.1:8080").await?;
 
     info!("WebSocket server listening on ws://127.0.0.1:8080");
 
@@ -26,9 +26,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     GameServer::start_logging_active_games(server.clone());
 
     loop {
-        let (stream, _) = listener.accept().await?; // Use ? here
+        let (stream, _) = listener.accept().await?;
 
-        let ws_stream = accept_async(stream).await?; // Use ? here
+        let ws_stream = accept_async(stream).await?;
 
         let server_clone = server.clone();
         tokio::spawn(handle_client(ws_stream, server_clone));

@@ -141,6 +141,31 @@ If no actions are received for a certain time (e.g., 30 seconds for a player's t
 ### Player Disconnection
 If a player disconnects, they will be removed from the game and a message will be broadcasted to all other players in the game.
 
+
+### **Server Logs**  
+
+The Tic-Tac-Toe WebSocket server uses the `log` crate for structured logging. Logs help track server activity, player actions, and errors.  
+
+#### **Log Levels**  
+- `info!` → General server events (e.g., connections, moves, game results).  
+- `warn!` → Potential issues (e.g., invalid moves, disconnections).  
+- `error!` → Critical failures (e.g., WebSocket errors).  
+
+#### **Examples**  
+```rust
+info!("New game created: {}", game_id);
+warn!("Player {} disconnected.", player_id);
+error!("WebSocket error: {:?}", err);
+```
+
+#### **Log Output & Storage**  
+By default, logs are printed to the console. To save logs to a file:  
+```bash
+RUST_LOG=info cargo run --bin server 2>&1 | tee server.log
+```
+
+For advanced logging, use `fern` or `env_logger`.  
+
 ## Example of WebSocket Interaction
 
 Here’s an example of how a WebSocket interaction might look like in the console:

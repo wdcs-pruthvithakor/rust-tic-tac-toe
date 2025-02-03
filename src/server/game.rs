@@ -132,11 +132,15 @@ impl Game {
             );
         }
         let current_player = &self.players[self.current_turn].get_name();
+        let current_symbol =  match &self.players[self.current_turn].get_symbol() {
+            PlayerSymbol::X => 'X',
+            PlayerSymbol::O => 'O'
+        };
         match self.check_winner() {
             None => {
                 format!(
-                    "🎮 Game ID: {}\n\n{}\n🌟 It's {}'s turn! (Enter a number from 1 to 9)",
-                    self.id, board_state, current_player
+                    "🎮 Game ID: {}\n\n{}\n🌟 It's {} ({})'s turn! (Enter a number from 1 to 9)",
+                    self.id, board_state, current_player, current_symbol
                 )
             }
             Some(PlayerSymbol::X) => {

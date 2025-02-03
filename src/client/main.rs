@@ -1,14 +1,13 @@
 use futures::{SinkExt, StreamExt};
 use tokio::io::{self, AsyncBufReadExt};
-use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tokio_tungstenite::WebSocketStream;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type WsSink = futures::stream::SplitSink<WsStream, Message>;
-
 
 #[tokio::main]
 async fn main() {
@@ -23,7 +22,7 @@ async fn main() {
 
     // Set up the channel and tasks
     let (tx, rx) = mpsc::unbounded_channel::<String>();
-    
+
     let input_task = spawn_input_task(tx);
     let send_task = spawn_send_task(rx, ws_write);
     let receive_task = spawn_receive_task(ws_read);
@@ -79,7 +78,10 @@ fn spawn_input_task(tx: mpsc::UnboundedSender<String>) -> tokio::task::JoinHandl
 }
 
 // Task to handle sending messages to the server
-fn spawn_send_task(mut rx: mpsc::UnboundedReceiver<String>, mut ws_write: WsSink) -> tokio::task::JoinHandle<()> {
+fn spawn_send_task(
+    mut rx: mpsc::UnboundedReceiver<String>,
+    mut ws_write: WsSink,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(input) = rx.recv().await {
             if ws_write.send(Message::Text(input.into())).await.is_err() {
@@ -92,7 +94,9 @@ fn spawn_send_task(mut rx: mpsc::UnboundedReceiver<String>, mut ws_write: WsSink
 }
 
 // Task to handle receiving messages from the server
-fn spawn_receive_task(mut ws_read: futures::stream::SplitStream<WsStream>) -> tokio::task::JoinHandle<()> {
+fn spawn_receive_task(
+    mut ws_read: futures::stream::SplitStream<WsStream>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(msg) = ws_read.next().await {
             match msg {

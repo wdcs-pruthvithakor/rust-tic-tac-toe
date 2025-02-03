@@ -55,8 +55,7 @@ impl Game {
     pub fn get_current_turn_player(&self) -> Option<String> {
         if let Some(player) = self.players.get(self.current_turn) {
             Some(player.get_id())
-        }
-        else {
+        } else {
             None
         }
     }
@@ -132,9 +131,9 @@ impl Game {
             );
         }
         let current_player = &self.players[self.current_turn].get_name();
-        let current_symbol =  match &self.players[self.current_turn].get_symbol() {
+        let current_symbol = match &self.players[self.current_turn].get_symbol() {
             PlayerSymbol::X => 'X',
-            PlayerSymbol::O => 'O'
+            PlayerSymbol::O => 'O',
         };
         match self.check_winner() {
             None => {
@@ -147,26 +146,22 @@ impl Game {
                 self.status = GameStatus::Finished;
                 let name = match self.players[0].get_symbol() {
                     PlayerSymbol::X => self.players[0].get_name(),
-                    PlayerSymbol::O => self.players[1].get_name()
+                    PlayerSymbol::O => self.players[1].get_name(),
                 };
                 format!(
                     "🎮 Game ID: {}\n\n{}\n🏆 Winner: {} (X) 🎉",
-                    self.id,
-                    board_state,
-                    name
+                    self.id, board_state, name
                 )
             }
             Some(PlayerSymbol::O) => {
                 self.status = GameStatus::Finished;
                 let name = match self.players[1].get_symbol() {
                     PlayerSymbol::O => self.players[1].get_name(),
-                    PlayerSymbol::X => self.players[0].get_name()
+                    PlayerSymbol::X => self.players[0].get_name(),
                 };
                 format!(
                     "🎮 Game ID: {}\n\n{}\n🏆 Winner: {} (O) 🎉",
-                    self.id,
-                    board_state,
-                    name
+                    self.id, board_state, name
                 )
             }
         }

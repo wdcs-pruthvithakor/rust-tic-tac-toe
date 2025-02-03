@@ -1,0 +1,16 @@
+# command: artillery run ws-load-test.yaml ( req: artillery )
+config:
+  target: "ws://127.0.0.1:8080"  # Replace with your server address
+  phases:
+    - duration: 60    # Test duration in seconds
+      arrivalRate: 10 # Start 10 new connections per second
+  protocols:
+    ws: {}          # Enable WebSocket protocol support
+scenarios:
+  - engine: "ws"
+    flow:
+      - think: 1
+      - send: "Hello, WebSocket server!"
+      - think: 1   # Wait 1 second
+      - send: "1"
+      - think: 4   # Wait 2 seconds

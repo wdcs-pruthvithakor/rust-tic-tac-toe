@@ -11,8 +11,8 @@ mod server;
 mod utils;
 mod websocket;
 use server::GameServer;
-use websocket::handle_client;
 use std::error::Error;
+use websocket::handle_client;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -28,9 +28,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         let (stream, _) = listener.accept().await?;
 
-        let ws_stream = accept_async(stream).await?;
-
-        let server_clone = server.clone();
-        tokio::spawn(handle_client(ws_stream, server_clone));
+        match accept_async(stream).await {
+            Ok(ws_stream) => {
+                let server_clone = server.clone();
+                tokio::spawn(handle_client(ws_stream, server_clone));
+            }
+            Err(_) => {
+                continue;
+            }
+        }
     }
 }

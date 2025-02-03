@@ -4,14 +4,14 @@ use crate::player::{Player, PlayerSymbol};
 use crate::server::GameServer;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
+use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::time::{timeout, Duration};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::WebSocketStream;
-use tokio::time::{Duration, timeout};
-use std::error::Error;
-use std::fmt;
 
 // Type aliases for convenience
 type WsStream = WebSocketStream<TcpStream>;
@@ -42,7 +42,7 @@ enum GameAction {
 
 enum SessionState {
     Continue,
-    Exit
+    Exit,
 }
 
 // Enum to represent different game messages
@@ -100,11 +100,12 @@ impl GameSession {
             let status = game.get_game_state();
             self.send_message(GameMessage::GameStatus(status)).await?;
         } else {
-            self.send_message(GameMessage::Error("Game not found".to_string())).await?;
+            self.send_message(GameMessage::Error("Game not found".to_string()))
+                .await?;
         }
         Ok(())
     }
-    
+
     async fn handle_action(&self, action: GameAction) -> Result<SessionState> {
         match action {
             GameAction::Move(position) => self.handle_move(position).await,
@@ -117,12 +118,11 @@ impl GameSession {
             GameAction::GetStatus => {
                 self.send_game_status().await?;
                 Ok(SessionState::Continue)
-            }    
+            }
             GameAction::Invalid => {
-                self.send_message(GameMessage::InvalidInput)
-                    .await?;
+                self.send_message(GameMessage::InvalidInput).await?;
                 Ok(SessionState::Continue) // Keep session active
-            }    
+            }
         }
     }
 
@@ -130,24 +130,24 @@ impl GameSession {
         let mut server = self.server.lock().await;
         if let Some(game) = server.get_mut_game(&self.game_id) {
             let mut game = game.lock().await;
-            
+
             match game.get_status() {
-                GameStatus::InProgress => {
-                    match game.make_move(&self.player_id, position - 1) {
-                        Ok(state) => {
-                            game.broadcast_to_players(state).await;
-                            if game.get_status() == GameStatus::Finished {
-                                game.broadcast_to_players(GameMessage::GameOver.to_string()).await
-                            }
-                        },
-                        Err(e) => self.send_message(GameMessage::Error(e.to_string())).await?,
+                GameStatus::InProgress => match game.make_move(&self.player_id, position - 1) {
+                    Ok(state) => {
+                        game.broadcast_to_players(state).await;
+                        if game.get_status() == GameStatus::Finished {
+                            game.broadcast_to_players(GameMessage::GameOver.to_string())
+                                .await
+                        }
                     }
-                }
+                    Err(e) => self.send_message(GameMessage::Error(e.to_string())).await?,
+                },
                 GameStatus::WaitingForPlayers => {
                     self.send_message(GameMessage::WaitingForPlayers).await?
                 }
                 GameStatus::Finished => {
-                    game.broadcast_to_players(GameMessage::GameOver.to_string()).await
+                    game.broadcast_to_players(GameMessage::GameOver.to_string())
+                        .await
                 }
             }
         }
@@ -160,7 +160,8 @@ impl GameSession {
             let mut game = game.lock().await;
             if game.get_status() == GameStatus::Finished {
                 game.reset();
-                game.broadcast_to_players(GameMessage::GameRestarted.to_string()).await;
+                game.broadcast_to_players(GameMessage::GameRestarted.to_string())
+                    .await;
                 let status = game.get_game_state();
                 game.broadcast_to_players(status).await;
             } else {
@@ -175,8 +176,10 @@ impl GameSession {
         if let Some(game) = server.get_mut_game(&self.game_id) {
             let mut game = game.lock().await;
             game.players.retain(|p| p.get_id() != self.player_id);
-            game.broadcast_to_players(GameMessage::PlayerDisconnected(self.player_name.clone()).to_string())
-                .await;
+            game.broadcast_to_players(
+                GameMessage::PlayerDisconnected(self.player_name.clone()).to_string(),
+            )
+            .await;
             warn!("Player {} disconnected.", self.player_name);
             game.reset();
             if game.players.is_empty() {
@@ -201,9 +204,8 @@ impl GameSession {
         let server = self.server.lock().await;
         if let Some(game) = server.get_game(&self.game_id) {
             let game = game.lock().await;
-            println!("{:?} {:?}", game.get_current_turn_player(), self.player_id);
             if game.get_status() == GameStatus::InProgress {
-                return true
+                return true;
             }
         }
         false
@@ -217,7 +219,6 @@ impl GameSession {
         }
         None
     }
-
 }
 
 // Implementation for GameMessage to convert to string
@@ -263,11 +264,12 @@ async fn handle_connection(
     server: Arc<Mutex<GameServer>>,
 ) -> Result<()> {
     // Initial setup
-    let (name, player_id, game_id) = match setup_player(ws_stream, ws_sink.clone(), server.clone()).await{
-        Ok((name, player_id, game_id)) => (name, player_id, game_id),
-        Err(_) => return Ok(())
-    };
-    
+    let (name, player_id, game_id) =
+        match setup_player(ws_stream, ws_sink.clone(), server.clone()).await {
+            Ok((name, player_id, game_id)) => (name, player_id, game_id),
+            Err(_) => return Ok(()),
+        };
+
     // Create game session
     let session = GameSession::new(
         ws_sink.clone(),
@@ -287,26 +289,18 @@ async fn handle_game_setup(
     player: &mut Player,
     server: Arc<Mutex<GameServer>>,
 ) -> Result<String> {
-    send_message(
-        &ws_sink,
-        GameMessage::ChooseOption,
-    )
-    .await?;
+    send_message(&ws_sink, GameMessage::ChooseOption).await?;
 
     match ws_stream.next().await {
         Some(Ok(Message::Text(choice))) => match choice.trim() {
-            "1" => {
-                match create_new_game(ws_sink, player, server).await {
-                    Ok(message) => Ok(message),
-                    Err(e) => Err(e)
-                } 
-            }
-            "2" => {
-                match join_existing_game(ws_stream, ws_sink, player, server).await{
-                    Ok(message) => Ok(message),
-                    Err(e) => Err(e)
-                }
-            }
+            "1" => match create_new_game(ws_sink, player, server).await {
+                Ok(message) => Ok(message),
+                Err(e) => Err(e),
+            },
+            "2" => match join_existing_game(ws_stream, ws_sink, player, server).await {
+                Ok(message) => Ok(message),
+                Err(e) => Err(e),
+            },
             _ => {
                 send_message(&ws_sink, GameMessage::InvalidChoice).await?;
                 Err("Invalid choice received from client".into())
@@ -323,13 +317,9 @@ async fn create_new_game(
 ) -> Result<String> {
     let mut server = server.lock().await;
     let game_id = server.create_game(player.clone());
-    
-    send_message(
-        &ws_sink,
-        GameMessage::GameCreated(game_id.clone()),
-    )
-    .await?;
-    
+
+    send_message(&ws_sink, GameMessage::GameCreated(game_id.clone())).await?;
+
     info!("Player {} created game {}", player.get_name(), game_id);
     Ok(game_id)
 }
@@ -345,18 +335,22 @@ async fn join_existing_game(
     let game_id = match ws_stream.next().await {
         Some(Ok(Message::Text(id))) => id,
         _ => {
-            send_message(&ws_sink, GameMessage::Error("Invalid game ID recieved".to_string())).await?;
-            return Err("Invalid game ID received".into())
+            send_message(
+                &ws_sink,
+                GameMessage::Error("Invalid game ID recieved".to_string()),
+            )
+            .await?;
+            return Err("Invalid game ID received".into());
         }
     };
 
     player.set_symbol(PlayerSymbol::O);
     let mut server = server.lock().await;
-    
+
     match server.join_game(&game_id, player.clone()).await {
         Ok(_) => send_message(&ws_sink, GameMessage::GameJoined(game_id.to_string())).await?,
-        Err(e) =>  {
-            send_message(&ws_sink, GameMessage::Error(e.clone())).await?; 
+        Err(e) => {
+            send_message(&ws_sink, GameMessage::Error(e.clone())).await?;
             return Err(Box::new(MyCustomError(e)));
         }
     }
@@ -379,9 +373,9 @@ async fn setup_player(
     let player_id = player.get_id();
 
     // Handle game setup
-    let game_id = match handle_game_setup(ws_stream, ws_sink, &mut player, server).await{
+    let game_id = match handle_game_setup(ws_stream, ws_sink, &mut player, server).await {
         Ok(game_id) => game_id,
-        Err(err) => return Err(err)
+        Err(err) => return Err(err),
     };
 
     Ok((name, player_id, game_id))
@@ -408,17 +402,21 @@ async fn handle_game_loop(
     session: &GameSession,
 ) -> Result<()> {
     'game_loop: while let Some(message) = {
-        if session.is_game_in_progress().await && session.get_current_turn_player().await == Some(session.player_id.clone()) {
+        if session.is_game_in_progress().await
+            && session.get_current_turn_player().await == Some(session.player_id.clone())
+        {
             match timeout(Duration::from_secs(30), ws_stream.next()).await {
                 Ok(Some(msg_result)) => Some(msg_result),
                 Ok(None) => continue 'game_loop,
                 Err(_) => {
-                    session.send_message(GameMessage::InactiveDisconnect).await?;
+                    session
+                        .send_message(GameMessage::InactiveDisconnect)
+                        .await?;
                     session.handle_disconnect().await?;
                     return Ok(());
                 }
             }
-        }  else {
+        } else {
             match timeout(Duration::from_secs(10), ws_stream.next()).await {
                 Ok(Some(msg_result)) => Some(msg_result),
                 _ => continue 'game_loop,

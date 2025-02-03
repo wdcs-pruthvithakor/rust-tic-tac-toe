@@ -3,7 +3,7 @@ config:
   target: "ws://127.0.0.1:8080"  # Replace with your server address
   phases:
     - duration: 60    # Test duration in seconds
-      arrivalRate: 10 # Start 10 new connections per second
+      arrivalRate: 500 # Start 10 new connections per second
   protocols:
     ws: {}          # Enable WebSocket protocol support
 scenarios:

@@ -325,35 +325,37 @@ async fn create_new_game(
 }
 
 async fn join_existing_game(
-    ws_stream: &mut futures::stream::SplitStream<WsStream>,
+    _ws_stream: &mut futures::stream::SplitStream<WsStream>,
     ws_sink: WsSink,
     player: &mut Player,
     server: Arc<Mutex<GameServer>>,
 ) -> Result<String> {
     send_message(&ws_sink, GameMessage::EnterGameId).await?;
 
-    let game_id = match ws_stream.next().await {
-        Some(Ok(Message::Text(id))) => id,
-        _ => {
-            send_message(
-                &ws_sink,
-                GameMessage::Error("Invalid game ID recieved".to_string()),
-            )
-            .await?;
-            return Err("Invalid game ID received".into());
-        }
-    };
+    // let game_id = match ws_stream.next().await {
+    //     Some(Ok(Message::Text(id))) => id,
+    //     _ => {
+    //         send_message(
+    //             &ws_sink,
+    //             GameMessage::Error("Invalid game ID recieved".to_string()),
+    //         )
+    //         .await?;
+    //         return Err("Invalid game ID received".into());
+    //     }
+    // };
 
     player.set_symbol(PlayerSymbol::O);
     let mut server = server.lock().await;
-
-    match server.join_game(&game_id, player.clone()).await {
-        Ok(_) => send_message(&ws_sink, GameMessage::GameJoined(game_id.to_string())).await?,
+    let game_id = match server.join_game(player.clone()).await {
+        Ok(id) => {
+            send_message(&ws_sink, GameMessage::GameJoined(id.to_string())).await?;
+            id
+        },
         Err(e) => {
             send_message(&ws_sink, GameMessage::Error(e.clone())).await?;
             return Err(Box::new(MyCustomError(e)));
         }
-    }
+    };
 
     info!("Player {} joined game {}", player.get_name(), game_id);
     Ok(game_id.to_string())

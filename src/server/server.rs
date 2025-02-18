@@ -37,36 +37,46 @@ impl GameServer {
         game_id
     }
 
-    pub async fn join_game(&mut self, game_id: &str, mut player: Player) -> Result<(), String> {
-        if let Some(game_c) = self.games.get_mut(game_id) {
-            let mut game = game_c.lock().await;
-            let player_name = player.get_name();
-            if game.get_status() == GameStatus::WaitingForPlayers {
-                // game.players
-                let players = game.get_players();
-                if let Some(game_player) = players.first() {
+    pub async fn join_game(&mut self, mut player: Player) -> Result<String, String> {
+        // Try to find an open game
+        for (game_id, game_arc) in self.games.iter_mut() {
+            let mut game = game_arc.lock().await;
+
+            // Only allow joining if game is in "WaitingForPlayers" state and has space for one more player
+            if game.get_status() == GameStatus::WaitingForPlayers && game.get_players().len() < 2 {
+                let player_name = player.get_name();
+                
+                // Determine which symbol the player will get
+                if let Some(game_player) = game.get_players().first() {
                     if game_player.get_symbol() == PlayerSymbol::O {
                         player.set_symbol(PlayerSymbol::X);
+                    } else {
+                        player.set_symbol(PlayerSymbol::O);
                     }
+                } else {
+                    player.set_symbol(PlayerSymbol::O); // First player always gets 'O'
                 }
-                game.add_player(player);
+
+                // Add the player to the game
+                game.add_player(player.clone());
                 game.broadcast_to_players(format!(
-                    "player {} has joined the game !\n",
+                    "Player {} has joined the game!\n",
                     player_name
                 ))
                 .await;
+
                 if game.get_players().len() == 2 {
                     game.set_status(GameStatus::InProgress);
                     let game_state = game.get_game_state();
                     game.broadcast_to_players(game_state).await;
                 }
-                Ok(())
-            } else {
-                Err("Game is not accepting players".to_string())
+
+                return Ok(game_id.clone()); // Return the game ID of the game the player joined
             }
-        } else {
-            Err("Game not found".to_string())
         }
+
+        // If no available games
+        Err("Couldn't find any games available, please try again or create a new one".to_string())
     }
 
     pub async fn remove_game(&mut self, game_id: &str) {
